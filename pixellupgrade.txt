@@ -1,0 +1,197 @@
+================================================================================
+CROWD-SOURCED & PERSONALIZED PIXEL ART MOSAIC GENERATOR
+System Architecture & Technical Specification Document
+================================================================================
+
+1. PROJECT CONCEPT & OBJECTIVES
+--------------------------------------------------------------------------------
+The application creates high-resolution photomosaics by mapping thousands of source image tiles to corresponding color coordinates of an uploaded master target poster[cite: 1]. The system operates on a compute-heavy, distributed CPU worker model designed for parallel execution without relying on expensive GPU instances[cite: 1].
+
+Core Additions & Feasibility Assessment:
+* Personal & Crowd-Sourced Asset Ingestion: Highly feasible. Users can toggle between public crowd-sourced pools, private session uploads (such as personal archives), or a blend of both.
+* Low-Friction Upload Pipeline: Direct browser-to-object-storage transfers using pre-signed upload URLs eliminate backend gateway bottlenecks and reduce upload friction to a single drag-and-drop action.
+* Multi-Tag Categorization & Tag Filtering: Feasible through automated computer-vision tagging (lightweight zero-shot classifiers or MobileNet edge inference) during the library ingestion stage, paired with metadata filtering in the worker chunk planner.
+* Admin & Infrastructure Observability: Feasible using modern cloud-native observability stacks. While Google Cloud Operations Suite (Cloud Monitoring) offers seamless native deployment, Grafana paired with Prometheus, Loki, and cAdvisor remains the standard choice for unified multi-service tracking across both local Docker and cloud VM deployments.
+
+
+2. SYSTEM ARCHITECTURE & DATA FLOW
+--------------------------------------------------------------------------------
+
+                     +---------------------------------------+
+                     |         Next.js Web Client            |
+                     |  - Drag-and-Drop Ingestion UI         |
+                     |  - Target Poster & Category Selector  |
+                     +-------------------+-------------------+
+                                         |
+                       Pre-Signed URLs   | REST API
+                                         v
++-----------------------+     +-------------------------------+     +-----------------------+
+|  Public / Private     |     |       Master Orchestrator     |     |   Aggregator &        |
+|  Object Storage       |<--->|       (Job Splitter)          |<--->|   Assembler Engine    |
+|  (Raw & Tiles)        |     +---------------+---------------+     +-----------+-----------+
++-----------+-----------+                     |                                 |
+            ^                                 | Chunk Dispatch                  | Final Render
+            |                                 v                                 v
++-----------+-----------+     +-------------------------------+     +-----------------------+
+|  Ingestion, Resizing  |     |     Distributed Workers       |     |  Completed Mosaic     |
+|  & Auto-Tagging Core  |     |   - Color Matching Loops      |     |  Storage / Download   |
++-----------------------+     |   - Tag Filter Masking        |     +-----------------------+
+                              |   - No-Repeat Enforcement     |
+                              +---------------+---------------+
+                                              |
+                                              v
+                              +-------------------------------+
+                              |    Observability Pipeline     |
+                              |   (Prometheus, Loki, Grafana) |
+                              +-------------------------------+
+
+
+3. DECOUPLED MICROSERVICES (5 SERVICES)
+--------------------------------------------------------------------------------
+
+SERVICE 1: Ingestion, Resizing & Auto-Tagging Core ("Library Analyzer")
+* Role: Pre-computes thumbnail transformations, color vectors, and semantic tags asynchronously upon upload to prevent repetitive runtime processing during mosaic generation[cite: 1].
+* Workflow:
+  1. Detects new image arrivals inside the public library or user-specific private folders.
+  2. Resizes images to standard square aspect tiles (e.g., 50x50 px)[cite: 1].
+  3. Computes average normalized RGB channels and contrast coefficients[cite: 1].
+  4. Runs a lightweight inference pass (MobileNet-v3 or OpenCV CLIP-embeddings) to assign multi-label semantic tags (e.g., landscapes, vehicles, trees, waterfalls, selfies, people).
+  5. Inserts the record into the indexed metadata catalog (image_index.parquet or an embedded vector store) with fields: image_id, storage_path, avg_r, avg_g, avg_b, tags[], visibility_scope (public vs. user_id).
+* Deployment: Cloud Functions or event-driven lightweight containers triggered via object storage notifications[cite: 1].
+
+SERVICE 2: Master Orchestrator Service ("Job Splitter")
+* Role: Acts as the coordination controller when a user initiates a mosaic build[cite: 1].
+* Workflow:
+  1. Ingests the target poster, reads its dimensions, and normalizes it to the target mosaic resolution[cite: 1].
+  2. Partitions the image matrix into a uniform coordinate grid (e.g., 100x100 = 10,000 cells, or 200x200 = 40,000 cells)[cite: 1].
+  3. Extracts the mean RGB value for each coordinate cell (x, y).
+  4. Filters the metadata index according to user-selected tags (e.g., waterfalls + landscapes) and access scopes (public crowd-sourced + private upload IDs).
+  5. Partitions grid coordinate batches into sub-task payloads (e.g., chunk_01_rows_0_24.json) and deposits them into the active job dispatch queue[cite: 1].
+* Deployment: Single lightweight VM, Google Cloud Run service, or local orchestrator container[cite: 1].
+
+SERVICE 3: Distributed Worker Core ("Compute Engine")
+* Role: Executes high-throughput matrix calculations to assign the closest matching source tile to every individual grid cell[cite: 1].
+* Workflow:
+  1. Worker instances poll or receive task manifests containing coordinate segments[cite: 1].
+  2. Loads the pre-filtered tile color array into an in-memory NumPy matrix[cite: 1].
+  3. Computes Euclidean color distance in perceptual color space:
+     Delta_C = sqrt(2*(R1 - R2)^2 + 4*(G1 - G2)^2 + 3*(B1 - B2)^2)
+  4. Applies active proximity constraints to prevent tile repetition across adjacent indices[cite: 1].
+  5. Emits mapped tile coordinate indices (e.g., grid_x_y: tile_source_id) to the intermediate stage bucket[cite: 1].
+* Deployment: Auto-scaling Managed Instance Group (MIG) of CPU-optimized VMs running Docker containers[cite: 1].
+
+SERVICE 4: Aggregator & Assembler Engine ("The Stitcher")
+* Role: Gathers mapped assignments, renders the composite high-resolution graphic, and applies visual enhancements[cite: 1].
+* Workflow:
+  1. Watches for completion flags from all task chunks[cite: 1].
+  2. Instantiates a blank image canvas matching final target pixel dimensions in OpenCV[cite: 1].
+  3. Reads assigned tile files from cache/storage and pastes them sequentially into grid block coordinates[cite: 1].
+  4. Runs color blending and tinting algorithms based on user parameters[cite: 1].
+  5. Exports the compiled mosaic in target formats (TIFF, PNG, JPEG) and updates the job status[cite: 1].
+* Deployment: High-memory compute instance or dedicated Docker container[cite: 1].
+
+SERVICE 5: Observability & Telemetry Pipeline
+* Role: Tracks system utilization, node auto-scaling, queue depth, and memory consumption across the distributed infrastructure.
+
+
+4. DETAILED FEATURE IMPLEMENTATIONS
+--------------------------------------------------------------------------------
+
+A. Frictionless User Upload Pipeline
+* Direct-to-Storage Pre-Signed URLs: The browser requests temporary pre-signed upload tokens from the backend. Files stream directly from the client device to object storage buckets (GCS/S3/MinIO), bypassing application server limits.
+* Client-Side Compression & Chunking: Prior to transmission, a Web Worker compresses images to maximum thumbnail bounds, calculating an MD5 checksum to prevent duplicate uploads.
+* Bulk Drag-and-Drop & Archive Ingestion: The client supports multi-file drag-and-drop as well as .zip archive upload. Uploaded .zip archives are unpacked by an ingestion worker directly inside the storage boundary.
+
+B. Dynamic Tag-Based & Category Filtering
+* Multi-Tag Selection: Users can restrict the mosaic source pool using logical operators:
+  - Inclusive Mode (Match Any): landscapes OR waterfalls
+  - Strict Mode (Match All): people AND selfies
+  - Exclude Mode (Negation): exclude: vehicles
+* Private vs. Crowd-Sourced Blend Ratio:
+  - 100% Crowd-Sourced (Shared community repository)[cite: 1]
+  - 100% Personal (Only private uploads from this session/account)
+  - Hybrid Percentage (e.g., 70% personal photos prioritized, filled with public photos when color deltas exceed threshold)
+* Fallback Resolution: If a narrow tag filter results in an insufficient pool of colors, the worker flags high-variance blocks and signals the Assembler to adjust tint blending on those coordinates[cite: 1].
+
+C. Visual, Algorithmic & Cloud Showcase Features
+* Color Bleeding / Alpha-Tinting Slider: An adjustable overlay matrix (alpha between 0.0 and 0.5) that blends a percentage of the original target image's RGB values over the applied source tiles, sharpening structural clarity when exact color matches are scarce[cite: 1].
+* "No-Repeat" Spatial Proximity Constraint: Workers maintain a rolling spatial buffer (sliding window) preventing the identical image ID from being selected if it has been used within a radius of N blocks (N >= 5)[cite: 1].
+* Live Auto-Scaling Showcase: Workers continuously broadcast operational heartbeats, allowing the presentation interface to visualize cluster scaling from idle to peak capacity under heavy jobs[cite: 1].
+
+
+5. MONITORING & OBSERVABILITY ARCHITECTURE
+--------------------------------------------------------------------------------
+
+Comparison of Solutions:
+* Grafana + Prometheus + Loki: Completely open-source, vendor-agnostic, zero-cost self-hosting, supports custom application metrics (e.g., cells processed/sec), and runs identically on a laptop via docker-compose or on cloud VMs. (Recommended Choice)
+* GCP Cloud Monitoring & Logging: Native GCP integration, zero setup for Compute Engine VMs, built-in MIG auto-scaling charts. Cloud-only; higher cost if metric volume escalates.
+* Netdata: Zero-configuration instant metrics with 1-second intervals. Weaker log correlation compared to Loki; less customizable for domain-specific metrics.
+
+Recommended Deployment Stack:
+* Prometheus: Pulls time-series metrics from node-exporter (VM CPU, RAM, Network I/O) and custom endpoints on Orchestrator & Workers.
+* cAdvisor: Collects container-level CPU/memory consumption per microservice.
+* Grafana Loki + Promtail: Streams structured application logs for chunk processing, tagging status, and task assignments into the same dashboard.
+* Unified Admin Dashboard Panels:
+  1. Cluster Status: Active worker count vs. queued chunk tasks.
+  2. Processing Throughput: Matrix comparisons executed per second.
+  3. Storage Utilization: Ingested public tiles vs. user session files.
+  4. Error Rate: Failed image conversions or corrupted upload traces.
+
+
+6. STORAGE TOPOLOGY
+--------------------------------------------------------------------------------
+
+/storage-root/
+│
+├── bucket-photo-library/             # Persistent public crowd-sourced images[cite: 1]
+│   ├── raw/                         # Original contributed photos[cite: 1]
+│   └── thumbs/                      # Standardized 50x50 px cached tiles[cite: 1]
+│
+├── bucket-user-sessions/             # Session-scoped user private images
+│   └── {user_or_session_id}/
+│       ├── raw/
+│       └── thumbs/
+│
+├── bucket-target-posters/            # Uploaded target master posters[cite: 1]
+│   └── {job_id}/
+│       └── target_original.ext
+│
+├── bucket-metadata/                  # Metadata indexes and tag mappings
+│   ├── public_catalog.parquet       # Public library indexed colors and tags
+│   └── session_{id}_catalog.parquet # Session-specific pre-computed index
+│
+├── bucket-task-coordination/         # Active pipeline execution states
+│   └── jobs/{job_id}/
+│       ├── tasks/                   # Segmented coordinate JSON chunk files[cite: 1]
+│       └── results/                 # Worker coordinate mapping outputs[cite: 1]
+│
+└── bucket-mosaic-outputs/            # Final assembled output files[cite: 1]
+    └── {job_id}/
+        └── mosaic_render_full.png
+
+
+7. LOCAL SANDBOX VS. CLOUD DEPLOYMENT
+--------------------------------------------------------------------------------
+
+Local Environment (docker-compose.yml):
+* Object Storage: MinIO (simulates Google Cloud Storage with an identical S3-compatible API).
+* Worker Scaling: Docker Compose scale commands (`docker compose up --scale worker=4`).
+* Telemetry: Local containers running Prometheus, Loki, cAdvisor, and Grafana.
+* Message / Task Broker: Lightweight Redis queue or shared MinIO task directory.
+
+Cloud Deployment (GCP):
+* Object Storage: Google Cloud Storage (GCS) buckets[cite: 1].
+* Worker Cluster: Managed Instance Group (MIG) with CPU-based auto-scaling policies[cite: 1].
+* Ingestion & Orchestration: Cloud Functions or Cloud Run containers[cite: 1].
+* Telemetry: Multi-node Grafana instance scraping internal VM VPC endpoints.
+
+
+8. EXECUTION WORKFLOW SUMMARY
+--------------------------------------------------------------------------------
+1. Upload: User accesses the client, uploads a target poster, selects categories (waterfalls, landscapes)[cite: 1], configures the public/private photo ratio, and optionally drags in a batch of personal photos.
+2. Pre-Processing: Any newly uploaded personal photos are resized, analyzed for RGB values, auto-tagged, and indexed into the session catalog.
+3. Partitioning: The Orchestrator splits the target image into a coordinate grid, filters the candidate library by chosen tags, and generates task chunks[cite: 1].
+4. Distributed Mapping: Auto-scaled worker instances pull task chunks, evaluate perceptual Euclidean color distances against candidate tiles, enforce spatial distance constraints, and record matches[cite: 1].
+5. Stitching: The Assembler downloads assigned tiles, renders the canvas, applies the designated tint overlay percentage, and outputs the final mosaic[cite: 1].
+6. Telemetry: The Admin Dashboard continuously displays cluster utilization, task distribution, and throughput metrics across the entire lifecycle.
+================================================================================

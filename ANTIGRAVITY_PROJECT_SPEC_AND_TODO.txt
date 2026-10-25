@@ -1,0 +1,132 @@
+================================================================================
+ANTIGRAVITY AI DIRECTIVE: PIXELMOSAIC PLATFORM UNIFICATION & RE-ARCHITECTURE
+Document: ANTIGRAVITY_PROJECT_SPEC_AND_TODO.txt
+Target: Codebase Transformation & Modernization
+================================================================================
+
+1. SYSTEM DIRECTIVE & MISSION OVERVIEW
+--------------------------------------------------------------------------------
+You are instructed to execute a full structural and architectural refactoring of
+the current codebase, consolidating fragmented experiments into a singular,
+high-performance, client-side visual engine: "PixelMosaic".
+
+CRITICAL FIRST DIRECTIVE: CLEAN SLATE PURGE
+- Purge, unlink, and delete all legacy pre-bundled library photos, cached index
+  blobs (e.g., legacy index.json, feature vectors, precomputed KD-trees), and
+  test artifacts across the repository.
+- No historical imagery or stale metadata should remain in source control or
+  local caches.
+- PixelMosaic must initialize from absolute zero state, sourcing image pools
+  exclusively via user browser ingestion or runtime connection to target GCP
+  Cloud Storage buckets.
+
+
+2. ARCHITECTURAL MANDATES: ZERO-BACKEND, ZERO-GPU, PURE CLIENT + GCP
+--------------------------------------------------------------------------------
+- ZERO-BACKEND:
+  * Eliminate all dedicated server runtimes (no Node/Express APIs, Python/FastAPI,
+    Flask, or custom microservices for computation).
+  * Static hosting only (Firebase Hosting, Cloudflare Pages, or GCP Cloud
+    Storage static website hosting).
+
+- ZERO-GPU SERVER DEPENDENCY / CPU & CLIENT-SIDE ACCELERATION:
+  * No GPU-dependent server clusters.
+  * All compute operations (color-space transformations, Voronoi tessellations,
+    ASCII density mapping, KD-tree lookups) must run entirely on the client
+    device utilizing Web Workers, OffscreenCanvas, SIMD-accelerated WebAssembly
+    (Rust/C++ compiled to Wasm), or client WebGL/WebGPU compute pipelines.
+
+- GCP BUCKET-ONLY DATA PLANE:
+  * Cloud Storage buckets (Google Cloud Storage) serve as the sole source of
+    truth for live event mosaics.
+  * Asset ingestion occurs via direct-to-bucket uploads using short-lived GCP
+    Signed URLs or authenticated bucket upload policies with appropriate CORS.
+  * State tracking occurs through bucket-hosted manifest files (`manifest.json`)
+    and coordinate patch files (`patches/[timestamp]_[index].json`).
+
+
+3. COMPREHENSIVE COMPUTE MODES
+--------------------------------------------------------------------------------
+
+MODE 1: ADVANCED PHOTOMOSAIC (CIE LAB DELTA-E & NO-REPEAT DYNAMICS)
+- Grid Resolution: Configurable target density (M x N tiles, dynamic downscaling
+  for low-spec clients).
+- Color Matching Engine:
+  * Abandon naive sRGB Euclidean distance.
+  * Convert target cell average colors and library tile averages into the
+    CIE L*a*b* color space.
+  * Implement standard Delta-E (Delta E*76 or Delta E00) for perceptual accuracy:
+    Delta E = sqrt((Delta L*)^2 + (Delta a*)^2 + (Delta b*)^2)
+- Spatial KD-Tree Index:
+  * In-memory 3D KD-Tree populated with (L*, a*, b*) tuples for O(log K)
+    nearest-neighbor retrieval across thousands of library assets.
+- No-Repeat / Dynamic Reuse Mitigation:
+  * Tile reuse restriction options: Strict "No-Repeat" (each tile used at most
+    once) vs. "Distance Repulsion" (a penalty distance factor added to Delta E
+    if a tile is reused within a radius R of its prior placement).
+  * Soft fallback when pool exhaustion occurs to prevent mosaic holes.
+
+MODE 2: HIGH-DENSITY ASCII / UNICODE MATRIX ENGINE
+- Render Engine:
+  * Canvas-to-text rasterization engine translating cell luminance, contrast,
+    and dominant edge angle into glyph representations.
+- Glyph Luminance Ramping:
+  * Support custom density character ramps (e.g., standard: ` .:-=+*#%@`,
+    extended 70-character grayscale ramps, or custom alphanumeric sets).
+- Color & Inversion Modes:
+  * Monochromatic (Phosphor Green, Amber CRT, High-Contrast B&W).
+  * Full Chromatic Matrix (sampling foreground RGB per character with
+    background luminance thresholding).
+- Sub-pixel Text Fitting:
+  * Strict monospace font metrics calculated via measureText on OffscreenCanvas
+    to eliminate drift on deep zoom levels.
+
+MODE 3: GEOMETRIC VORONOI CELLULAR DECOMPOSITION
+- Sampling Strategy:
+  * Stippling/Poisson-disc distribution or edge-weighted feature detection
+    (Sobel filter pass to concentrate Voronoi seed points along high-frequency
+    image edges).
+- Cell Construction:
+  * Real-time Delaunay triangulation and dual Voronoi diagram generation.
+  * Per-cell color sampling: Area-weighted average or geometric centroid color
+    sampling from source imagery.
+- Vector Rendering:
+  * Renderable to both dynamic HTML5 Canvas and scalable SVG export.
+  * Configurable cell borders, relaxation iterations (Lloyd's relaxation), and
+    opacity blending.
+
+MODE 4: DEEP-ZOOM & TIME-LAPSE RECONSTRUCTION
+- Deep-Zoom Tile Pyramid:
+  * Support for Deep Zoom Image (DZI) or Slippy Map tile pyramids (OSM-style
+    Z/X/Y directories) rendered using Leaflet.js or OpenSeadragon.
+  * Allows smooth panning from an aggregate master portrait down to microscopic
+    individual attendee selfies without loading gigabytes of raw data at once.
+- Temporal Time-Lapse Mode:
+  * Chronological reconstruction slider showing the mosaic evolving from 0% to
+    100% completion based on upload timestamps.
+  * Playback controls (Speed multiplier, Pause, Step-by-Step, Scrub).
+
+
+4. LIVE EVENT INTERACTIVE DISPLAY ARCHITECTURE
+--------------------------------------------------------------------------------
+
+DIRECT-TO-BUCKET UPLOAD PIPELINE (ATTENDEE MOBILE WEB CLIENT)
+1. Attendee scans QR code at event -> opens lightweight Progressive Web App (PWA).
+2. Client requests a Signed Upload URL from a stateless Cloud Run/Worker endpoint
+   OR uploads directly via client credentials/GCS pre-signed policy.
+3. Image is normalized, compressed (client-side WebP/JPEG, max dimension 1024px),
+   and stripped of EXIF metadata before transit.
+4. Binary writes straight to gs://[EVENT_BUCKET]/raw/[UUID].[ext].
+
+EVENT DISPLAY ENGINE (PATCH POLLING & WEBSOCKET-FREE OPERATION)
+1. Display screen runs a static client in kiosk mode connected to the display display.
+2. Zero WebSocket servers required:
+   * Event Display polls a bucket manifest: gs://[EVENT_BUCKET]/live/manifest.json
+     (with cache-control headers: no-cache, max-age=2).
+   * Manifest contains monotonic version: { "version": 1042, "last_patch": "patches/patch_1042.json" }.
+3. Display fetches incremental JSON patches containing newly assigned tile coordinates:
+   { "cell_index": 4820, "image_url": "...", "timestamp": 1729864200 }.
+4. Animation Subsystem:
+   * New tiles trigger a dynamic "fly-in" or "flip-over" animation onto the
+     canvas grid, highlighting the latest attendee contributions on the big screen.
+================================================================================

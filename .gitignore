@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.py[cod]
+*.class
+.venv/
+venv/
+
+# Environment & Secrets
+.env
+*.pem
+credentials.json
+service_account.json
+
+# Build & Dist
+dist/
+build/
+.terraform/
+*.tfstate
+*.tfstate.backup
+
+# Storage & Output test data
+storage/
+downloads/
+temp/
+*.log
