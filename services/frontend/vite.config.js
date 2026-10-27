@@ -5,9 +5,22 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 3000,
-    host: true
+    host: true,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true
+      }
+    }
   },
   build: {
-    outDir: 'dist'
+    outDir: 'dist',
+    rollupOptions: {
+      output: {
+        // Hash-only names for code-split chunks: the main bundle should not advertise what the
+        // lazily loaded pages are (the unlisted admin console is one of them).
+        chunkFileNames: 'assets/[hash].js',
+      },
+    },
   }
 });

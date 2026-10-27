@@ -1,0 +1,64 @@
+# GCP parity test: runs every service with USE_GCP=true (the production google-cloud-storage
+# code path) against a local GCS emulator instead of MinIO. Same images, same env contract as the
+# Compute Engine VMs in terraform/, so it catches production-only bugs without a cloud account.
+#
+#   docker compose -p pixelgcp -f docker-compose.gcp-parity.yml up -d --build
+#   open http://localhost:3001
+#   docker compose -p pixelgcp -f docker-compose.gcp-parity.yml down -v
+
+x-gcp-env: &gcp-env
+  USE_GCP: "true"
+  STORAGE_EMULATOR_HOST: http://gcs:4443
+  GCP_PROJECT_ID: pixel-parity
+  AUTO_CREATE_BUCKETS: "true"   # the emulator starts empty; in GCP Terraform creates the buckets
+  BUCKET_PHOTO_LIBRARY: pixel-parity-photo-library
+  BUCKET_TARGET_POSTERS: pixel-parity-target-posters
+  BUCKET_TASK_COORDINATION: pixel-parity-task-coordination
+  BUCKET_MOSAIC_OUTPUTS: pixel-parity-mosaic-outputs
+
+networks:
+  edge:
+  data:
+
+services:
+  gcs:
+    image: fsouza/fake-gcs-server:1.50.2
+    command: ["-scheme", "http", "-port", "4443", "-public-host", "gcs:4443", "-external-url", "http://gcs:4443", "-backend", "memory"]
+    networks: [data]
+
+  gateway:
+    build: { context: ., dockerfile: services/gateway/Dockerfile }
+    environment:
+      <<: *gcp-env
+      MAX_UPLOAD_MB: "30"
+      AUTH_DEV_RETURN_RESET_LINK: "true"   # local test stack only
+      ADMIN_USERNAMES: "pm_admin"
+    networks: [edge, data]
+    depends_on: [gcs]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8000/health || exit 1"]
+      interval: 5s
+      retries: 20
+
+  worker:
+    build: { context: ., dockerfile: services/worker/Dockerfile }
+    environment: *gcp-env
+    networks: [data]
+    deploy: { replicas: 2 }
+    depends_on: { gateway: { condition: service_healthy } }
+
+  assembler:
+    build: { context: ., dockerfile: services/assembler/Dockerfile }
+    environment: *gcp-env
+    networks: [data]
+    depends_on: { gateway: { condition: service_healthy } }
+
+  frontend:
+    build: { context: services/frontend, dockerfile: Dockerfile }
+    environment:
+      FRONTEND_PORT: "3000"
+      API_GATEWAY_URL: http://gateway:8000
+      MAX_UPLOAD_MB: "32"
+    ports: ["3001:3000"]
+    networks: [edge]
+    depends_on: { gateway: { condition: service_healthy } }

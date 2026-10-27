@@ -1,0 +1,32 @@
+# Builds the four microservice images from source and pushes them to Artifact Registry.
+# Invoked by scripts/deploy_gcp.ps1:
+#   gcloud builds submit --config cloudbuild.yaml --substitutions _REPO=...,_TAG=...
+steps:
+  - id: gateway
+    name: gcr.io/cloud-builders/docker
+    args: ["build", "-t", "${_REPO}/gateway:${_TAG}", "-f", "services/gateway/Dockerfile", "."]
+    waitFor: ["-"]
+  - id: worker
+    name: gcr.io/cloud-builders/docker
+    args: ["build", "-t", "${_REPO}/worker:${_TAG}", "-f", "services/worker/Dockerfile", "."]
+    waitFor: ["-"]
+  - id: assembler
+    name: gcr.io/cloud-builders/docker
+    args: ["build", "-t", "${_REPO}/assembler:${_TAG}", "-f", "services/assembler/Dockerfile", "."]
+    waitFor: ["-"]
+  - id: frontend
+    name: gcr.io/cloud-builders/docker
+    args: ["build", "-t", "${_REPO}/frontend:${_TAG}", "services/frontend"]
+    waitFor: ["-"]
+
+images:
+  - "${_REPO}/gateway:${_TAG}"
+  - "${_REPO}/worker:${_TAG}"
+  - "${_REPO}/assembler:${_TAG}"
+  - "${_REPO}/frontend:${_TAG}"
+
+options:
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1800s

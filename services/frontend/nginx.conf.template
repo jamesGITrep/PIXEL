@@ -1,0 +1,101 @@
+# Frontend edge: the ONLY service users can reach.
+# Serves the single-page app and forwards /api/* to the API Gateway, which runs on its own VM.
+# ${API_GATEWAY_URL} is substituted at container start (nginx image envsubst), e.g.
+#   local compose:  http://gateway:8000
+#   GCP:            http://<internal load balancer IP>:8000
+
+# Public origin for canonical/OG URLs. Behind the GCP load balancer the original scheme
+# arrives in X-Forwarded-Proto.
+map $http_x_forwarded_proto $site_scheme {
+    default $http_x_forwarded_proto;
+    ""      $scheme;
+}
+
+server {
+    listen ${FRONTEND_PORT};
+    server_name _;
+    server_tokens off;
+    root /usr/share/nginx/html;
+
+    # Photo uploads and target images stream through to the gateway
+    client_max_body_size ${MAX_UPLOAD_MB}m;
+
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # index.html carries __SITE_URL__ placeholders for canonical / Open Graph / JSON-LD URLs
+    sub_filter '__SITE_URL__' '$site_scheme://$http_host';
+    sub_filter_once off;
+
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok";
+    }
+
+    # --- Search engines: index the landing page; never the API -----------------------------
+    location = /robots.txt {
+        default_type text/plain;
+        return 200 "User-agent: *\nAllow: /\nDisallow: /api/\n\nSitemap: $site_scheme://$http_host/sitemap.xml\n";
+    }
+
+    location = /sitemap.xml {
+        default_type application/xml;
+        return 200 '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>$site_scheme://$http_host/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>\n</urlset>\n';
+    }
+
+    # --- API: everything goes to the single API Gateway --------------------------------------
+    location /api/ {
+        proxy_pass ${API_GATEWAY_URL};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $site_scheme;
+        # Stream request bodies (uploads) straight to the gateway instead of buffering them here
+        proxy_request_buffering off;
+        # Full-resolution exports (8k-12k PNGs) take several seconds to render
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+    }
+
+    # --- App pages ---------------------------------------------------------------------------
+    location = / {
+        try_files /index.html =404;
+        add_header Cache-Control "no-cache";
+    }
+
+    location ~ ^/(live|studio|gallery|community)/?$ {
+        try_files /index.html =404;
+        add_header Cache-Control "no-cache";
+    }
+
+    # Signed-in account page: private per user, so never indexed or cached
+    location ~ ^/account/?$ {
+        try_files /index.html =404;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        add_header Cache-Control "no-store" always;
+    }
+
+    # Unlisted admin console: reachable only by typing this URL. Never linked, never in the
+    # sitemap or robots.txt, never indexed or cached.
+    location ~ ^/admin1101/?$ {
+        try_files /index.html =404;
+        add_header X-Robots-Tag "noindex, nofollow, noarchive" always;
+        add_header Cache-Control "no-store" always;
+    }
+
+    location /assets/ {
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # Static files (favicon, social image); anything else is a real 404 that still shows the app,
+    # which sends the visitor to the landing page.
+    location / {
+        try_files $uri =404;
+    }
+
+    error_page 404 /index.html;
+}

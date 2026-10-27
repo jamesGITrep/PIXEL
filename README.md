@@ -54,7 +54,7 @@ graph TD
     B_THUMB -.->|Tile Canvas Pasting| S4
     B_TARGET -.->|Dynamic Alpha Tinting Overlay| S4
     S4 -->|Export Final Mosaic & Preview| B_OUT
-    B_OUT -->|Interactive Deep-Zoom Explorer| User
+    B_OUT -->|PNG / JPEG Export| User
 ```
 
 ---
@@ -80,8 +80,9 @@ An interactive dashboard displaying:
 - Animated Worker Node cards tracking chunk claiming, execution progress bars, and state changes.
 - Streaming cluster log terminal detailing worker lifecycle (`[Spawning Worker-1...]`, `[Decommissioning Worker-1...]`).
 
-### 5. Interactive Deep-Zoom Mosaic Explorer
-Allows users to pan and zoom from full poster view down to individual 50×50 px source photo tiles, complete with a floating tile inspection tooltip displaying exact coordinate and match metadata.
+### 5. Render Engines: Photomosaic, Sobel ASCII, Kuwahara Oil, Vector Flow Field
+- **Kuwahara Oil** — every pixel takes the RGB mean $\mu_k$ of whichever of its four $(R+1)\times(R+1)$ quadrant windows has the lowest variance $\sigma_k^2$, so flat regions become paint patches while edges stay sharp. Radius $R$ = 2–8 px (default 4); integral images keep it O(pixels).
+- **Vector Flow Field** — Sobel gradients give the stroke angle $\theta = \operatorname{atan2}(G_y, G_x) + \pi/2$ (tangent to edges); particles are RK2-integrated $p_{t+1} = p_t + d\,[\cos\theta, \sin\theta]$ and drawn as anti-aliased strokes in the source colour. Parameters: `step_length` (15), `num_particles` (5000), `stroke_width` (2).
 
 ---
 

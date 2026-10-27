@@ -1,0 +1,34 @@
+#!/bin/bash
+# Container-Optimized OS start-up: run exactly one microservice on this VM.
+# Rendered by Terraform per service (see compute.tf). Re-runs on every boot.
+set -uo pipefail
+
+SERVICE="${service}"
+IMAGE="${image}"
+
+# COS keeps / read-only; docker credentials must live in a writable home
+export HOME=/home/chronos
+docker-credential-gcr configure-docker --registries=${registry_host}
+
+# Retry until the image is pullable (first deploy pushes images right after the VMs appear)
+until docker pull "$IMAGE"; do
+  echo "waiting for $IMAGE ..."
+  sleep 15
+done
+
+docker rm -f "$SERVICE" >/dev/null 2>&1 || true
+
+docker run -d \
+  --name "$SERVICE" \
+  --restart=always \
+  --stop-timeout 25 \
+  --log-driver=gcplogs \
+  --log-opt labels=service \
+  --label service="$SERVICE" \
+%{ for p in ports ~}
+  -p ${p} \
+%{ endfor ~}
+%{ for k, v in env ~}
+  -e ${k}='${v}' \
+%{ endfor ~}
+  "$IMAGE"

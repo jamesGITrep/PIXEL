@@ -1,27 +1,37 @@
 import React, { useState, useEffect, useRef } from 'react';
+import {
+  IconCamera,
+  IconSearch,
+  IconCrosshair,
+  IconCheck,
+  IconArrowRight,
+  IconSparkles,
+} from './Icons';
 
-const GATEWAY_URL = import.meta.env.VITE_GATEWAY_URL || 'http://localhost:8000';
+// Same-origin: the frontend's edge proxy forwards /api/* to the API Gateway. Browsers never
+// address the gateway, storage or any other service directly.
+const GATEWAY_URL = import.meta.env.VITE_GATEWAY_URL || '';
 
 export default function LiveEventArena() {
   const [activeTab, setActiveTab] = useState('display'); // 'display', 'organizer', 'mobile'
   const [eventId, setEventId] = useState('evt_demo_stage');
-  const [eventTitle, setEventTitle] = useState('Campus Festival 2026 Live Mural');
+  const [eventTitle, setEventTitle] = useState('Global Creative Summit 2026 Live Mural');
   const [attendeeCount, setAttendeeCount] = useState(48);
   const [photosPlaced, setPhotosPlaced] = useState(112);
   const [patchesVersion, setPatchesVersion] = useState(0);
 
-  // Spotlight loop state
+  // Spotlight Loop State
   const [latestSpotlight, setLatestSpotlight] = useState(null);
 
-  // Mobile Ingestion state
+  // Mobile Ingestion State
   const [mobileUploading, setMobileUploading] = useState(false);
   const [myToken, setMyToken] = useState(null);
   const [tokenSearchInput, setTokenSearchInput] = useState('');
   const [tokenSearchResult, setTokenSearchResult] = useState(null);
+  const [mobilePreview, setMobilePreview] = useState(null);
 
   const canvasRef = useRef(null);
 
-  // Initialize and periodically poll patches from Gateway
   useEffect(() => {
     let lastEtag = null;
     let timer = null;
@@ -42,11 +52,11 @@ export default function LiveEventArena() {
           if (data.patches && data.patches.length > 0) {
             const latest = data.patches[data.patches.length - 1];
             renderPatchOnCanvas(latest);
-            setLatestSpotlight(latest);
+            triggerSpotlight(latest);
           }
         }
       } catch (err) {
-        // Fallback for offline local demo
+        // Fallback for local demo
       }
       timer = setTimeout(pollPatches, 2500);
     };
@@ -63,84 +73,120 @@ export default function LiveEventArena() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
-    canvas.width = 1000;
+    canvas.width = 1100;
     canvas.height = 700;
 
-    // Dark stage background
-    ctx.fillStyle = '#06080e';
-    ctx.fillRect(0, 0, 1000, 700);
+    // Dark architectural background
+    ctx.fillStyle = '#080a10';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Subtle grid guide
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+    // Subtle grid guide lines
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.035)';
     ctx.lineWidth = 1;
-    const step = 20;
-    for (let x = 0; x < 1000; x += step) {
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 700); ctx.stroke();
+    const cols = 55;
+    const rows = 35;
+    const stepX = canvas.width / cols;
+    const stepY = canvas.height / rows;
+
+    for (let x = 0; x <= canvas.width; x += stepX) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
     }
-    for (let y = 0; y < 700; y += step) {
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(1000, y); ctx.stroke();
+    for (let y = 0; y <= canvas.height; y += stepY) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
     }
 
-    // Simulated collective portrait silhouette
-    const grad = ctx.createRadialGradient(500, 350, 40, 500, 350, 400);
-    grad.addColorStop(0, 'rgba(0, 240, 255, 0.2)');
-    grad.addColorStop(0.5, 'rgba(255, 42, 133, 0.15)');
+    // Atmospheric central silhouette
+    const grad = ctx.createRadialGradient(
+      canvas.width / 2, canvas.height / 2, 50,
+      canvas.width / 2, canvas.height / 2, 420
+    );
+    grad.addColorStop(0, 'rgba(56, 189, 248, 0.16)');
+    grad.addColorStop(0.5, 'rgba(99, 102, 241, 0.1)');
     grad.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.arc(500, 350, 380, 0, Math.PI * 2);
+    ctx.arc(canvas.width / 2, canvas.height / 2, 400, 0, Math.PI * 2);
     ctx.fill();
+
+    // Populate existing tiles
+    for (let i = 0; i < 112; i++) {
+      const rx = Math.floor(Math.random() * cols);
+      const ry = Math.floor(Math.random() * rows);
+      const px = rx * stepX;
+      const py = ry * stepY;
+      const hue = (i * 43) % 360;
+      ctx.fillStyle = `hsl(${hue}, 65%, 48%)`;
+      ctx.fillRect(px + 1, py + 1, stepX - 2, stepY - 2);
+    }
   };
 
   const renderPatchOnCanvas = (patch) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
-    const cols = 50;
+    const cols = 55;
     const rows = 35;
     const tileW = canvas.width / cols;
     const tileH = canvas.height / rows;
 
-    const col = patch.col || (patch.cell_index % cols);
-    const row = patch.row || Math.floor(patch.cell_index / cols);
+    const col = patch.col ?? (patch.cell_index % cols);
+    const row = patch.row ?? Math.floor(patch.cell_index / cols);
     const px = col * tileW;
     const py = row * tileH;
 
-    // Draw tile arrival flash
-    ctx.fillStyle = '#00f0ff';
-    ctx.fillRect(px - 2, py - 2, tileW + 4, tileH + 4);
+    // Subtle glow flash
+    ctx.fillStyle = 'rgba(56, 189, 248, 0.8)';
+    ctx.fillRect(px - 1, py - 1, tileW + 2, tileH + 2);
 
-    // Tile image or vibrant attendee tint
-    const hue = (patch.cell_index * 37) % 360;
-    ctx.fillStyle = `hsl(${hue}, 80%, 55%)`;
+    const hue = ((patch.cell_index || col * 17 + row * 11) * 37) % 360;
+    ctx.fillStyle = `hsl(${hue}, 75%, 52%)`;
     ctx.fillRect(px, py, tileW, tileH);
   };
 
-  // Mobile Ingestion Submit (with EXIF stripping and Contributor Token)
+  const triggerSpotlight = (patch) => {
+    setLatestSpotlight(patch);
+    setTimeout(() => {
+      setLatestSpotlight(null);
+    }, 4500);
+  };
+
+  // Mobile Ingestion Submit
   const handleMobileUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setMobileUploading(true);
+    setMobilePreview(URL.createObjectURL(file));
+
     const formData = new FormData();
     formData.append('photo', file);
 
     try {
       const res = await fetch(`${GATEWAY_URL}/api/v1/events/${eventId}/upload`, {
         method: 'POST',
-        body: formData
+        body: formData,
       });
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+
       setMyToken(data.contributor_token);
-      setLatestSpotlight({
+      setPhotosPlaced((prev) => prev + 1);
+      triggerSpotlight({
         contributor_token: data.contributor_token,
         col: data.col,
-        row: data.row
+        row: data.row,
       });
     } catch (err) {
-      // Local demo fallback token
       const num = Math.floor(1000 + Math.random() * 9000);
-      setMyToken(`#T-${num}`);
+      const token = `#T-${num}`;
+      setMyToken(token);
+      setPhotosPlaced((prev) => prev + 1);
+
+      const col = Math.floor(Math.random() * 55);
+      const row = Math.floor(Math.random() * 35);
+      renderPatchOnCanvas({ col, row, cell_index: row * 55 + col });
+      triggerSpotlight({ contributor_token: token, col, row });
     } finally {
       setMobileUploading(false);
     }
@@ -156,239 +202,254 @@ export default function LiveEventArena() {
       if (res.ok) {
         const data = await res.json();
         setTokenSearchResult(data);
-        setLatestSpotlight(data);
+        triggerSpotlight(data);
+        drawBeacon(data.col, data.row);
       } else {
-        // Fallback demo match
-        const dummy = { token: clean, col: 24, row: 18, cell_index: 918 };
+        const dummy = { token: clean, col: 26, row: 17, cell_index: 961 };
         setTokenSearchResult(dummy);
-        setLatestSpotlight(dummy);
+        triggerSpotlight(dummy);
+        drawBeacon(dummy.col, dummy.row);
       }
     } catch (err) {
-      const dummy = { token: clean, col: 24, row: 18, cell_index: 918 };
+      const dummy = { token: clean, col: 26, row: 17, cell_index: 961 };
       setTokenSearchResult(dummy);
-      setLatestSpotlight(dummy);
+      triggerSpotlight(dummy);
+      drawBeacon(dummy.col, dummy.row);
     }
   };
 
+  const drawBeacon = (col, row) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const cols = 55;
+    const rows = 35;
+    const tileW = canvas.width / cols;
+    const tileH = canvas.height / rows;
+
+    const px = col * tileW + tileW / 2;
+    const py = row * tileH + tileH / 2;
+
+    let rad = 8;
+    let alpha = 1.0;
+    const anim = setInterval(() => {
+      rad += 3.5;
+      alpha -= 0.08;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(px, py, rad, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(56, 189, 248, ${alpha})`;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.restore();
+
+      if (alpha <= 0) clearInterval(anim);
+    }, 40);
+  };
+
   return (
-    <div className="stage-wall-layout">
-      {/* Stage Wall Top Header */}
-      <div className="stage-top-hud">
-        <div>
-          <h2 style={{ fontSize: '1.25rem', fontWeight: 800 }}>{eventTitle}</h2>
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-            Collaborative Big-Screen Mural • Event ID: <code style={{ color: 'var(--accent-cyan)' }}>{eventId}</code>
+    <div className="broadcast-stage-frame">
+      {/* Broadcast Top Bar */}
+      <div className="broadcast-top-bar">
+        <div className="event-headline-wrap">
+          <span className="event-live-indicator">
+            <span className="status-dot-green" />
+            <span>LIVE SYNC</span>
           </span>
+          <span className="event-title-text">{eventTitle}</span>
         </div>
 
         {/* METRICS GUARDRAIL: Attendee count & photo counter ONLY. Never show cloud vitals here */}
-        <div style={{ display: 'flex', gap: '2rem' }}>
-          <div className="stage-metric-pill">
-            <span>Live Attendees:</span>
-            <span className="stage-metric-val">{attendeeCount}</span>
+        <div className="event-metric-strip">
+          <div className="metric-item">
+            <span>Participants:</span>
+            <span className="metric-num">{attendeeCount}</span>
           </div>
-          <div className="stage-metric-pill">
+          <div className="metric-item">
             <span>Photos Placed:</span>
-            <span className="stage-metric-val" style={{ color: 'var(--accent-pink)' }}>{photosPlaced}</span>
+            <span className="metric-num" style={{ color: 'var(--accent-rose)' }}>{photosPlaced}</span>
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <div style={{ display: 'flex', gap: '0.4rem' }}>
           <button
-            className={`btn-nav ${activeTab === 'display' ? 'active' : ''}`}
+            className={`btn-nav-link ${activeTab === 'display' ? 'active' : ''}`}
             onClick={() => setActiveTab('display')}
           >
             Big-Screen Wall
           </button>
           <button
-            className={`btn-nav ${activeTab === 'mobile' ? 'active' : ''}`}
+            className={`btn-nav-link ${activeTab === 'mobile' ? 'active' : ''}`}
             onClick={() => setActiveTab('mobile')}
           >
-            Mobile Upload (PWA)
+            <IconCamera size={14} />
+            Mobile Capture
           </button>
           <button
-            className={`btn-nav ${activeTab === 'organizer' ? 'active' : ''}`}
+            className={`btn-nav-link ${activeTab === 'organizer' ? 'active' : ''}`}
             onClick={() => setActiveTab('organizer')}
           >
-            Organizer Setup
+            Settings
           </button>
         </div>
       </div>
 
-      {/* Main View Area */}
+      {/* 1. BIG-SCREEN DISPLAY WALL */}
       {activeTab === 'display' && (
-        <div className="stage-canvas-stage">
-          <canvas ref={canvasRef} style={{ maxWidth: '92%', maxHeight: '88%', boxShadow: '0 25px 60px rgba(0,0,0,0.8)', borderRadius: '8px' }} />
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#07080d', position: 'relative', overflow: 'hidden' }}>
+          <div style={{ boxShadow: '0 25px 70px rgba(0, 0, 0, 0.85)', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
+            <canvas ref={canvasRef} style={{ display: 'block', maxWidth: '92vw', maxHeight: '82vh' }} />
+          </div>
 
-          {/* Automated Spotlight Reveal Loop */}
+          {/* Spotlight Notification Card */}
           {latestSpotlight && (
-            <div className="spotlight-reveal-badge">
-              <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', color: 'var(--accent-cyan)', fontWeight: 700 }}>
-                ★ New Photo Spotlight
+            <div className="spotlight-broadcast-card">
+              <div className="spotlight-card-label">
+                <span className="status-dot-green" />
+                <span>Live Ingestion Spotlight</span>
               </div>
-              <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--accent-pink)', marginTop: '2px' }}>
-                Contributor {latestSpotlight.contributor_token || latestSpotlight.token || '#T-9182'}
+              <div className="spotlight-token-id">
+                {latestSpotlight.contributor_token || latestSpotlight.token || '#T-9182'}
               </div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                Placed at Grid Coordinate: Col {latestSpotlight.col || 24}, Row {latestSpotlight.row || 18}
+              <div className="spotlight-coord-tag">
+                Placed at Grid: Column {latestSpotlight.col || 26}, Row {latestSpotlight.row || 17}
               </div>
             </div>
           )}
 
-          {/* "Find My Photo" Floating Search Bar */}
-          <div style={{
-            position: 'absolute',
-            bottom: '1.5rem',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            background: 'rgba(15, 18, 29, 0.90)',
-            backdropFilter: 'blur(15px)',
-            border: '1px solid var(--border-accent)',
-            borderRadius: '999px',
-            padding: '6px 14px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.6rem',
-            boxShadow: '0 10px 30px rgba(0,0,0,0.6)'
-          }}>
-            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Find My Photo:</span>
+          {/* "Find My Photo" Command Bar */}
+          <div className="command-bar-find">
+            <IconSearch size={15} style={{ color: 'var(--text-tertiary)' }} />
             <input
               type="text"
-              placeholder="#T-9182"
+              className="command-input"
+              placeholder="#T-XXXX"
               value={tokenSearchInput}
               onChange={(e) => setTokenSearchInput(e.target.value)}
-              style={{
-                background: 'rgba(255,255,255,0.06)',
-                border: '1px solid var(--border-subtle)',
-                color: '#fff',
-                padding: '4px 10px',
-                borderRadius: '6px',
-                fontFamily: 'var(--font-mono)',
-                fontSize: '0.82rem',
-                outline: 'none',
-                width: '100px',
-                textTransform: 'uppercase'
-              }}
+              onKeyDown={(e) => e.key === 'Enter' && handleFindPhoto()}
             />
-            <button
-              onClick={handleFindPhoto}
-              style={{
-                background: 'var(--accent-cyan)',
-                color: '#06080e',
-                border: 'none',
-                fontWeight: 700,
-                fontSize: '0.78rem',
-                padding: '4px 12px',
-                borderRadius: '999px',
-                cursor: 'pointer'
-              }}
-            >
-              Locate
+            <button className="btn-command-locate" onClick={handleFindPhoto}>
+              Locate Tile
             </button>
             {tokenSearchResult && (
-              <span style={{ fontSize: '0.75rem', color: 'var(--accent-green)', fontFamily: 'var(--font-mono)' }}>
-                Located at Col {tokenSearchResult.col}, Row {tokenSearchResult.row}!
+              <span style={{ fontSize: '0.74rem', color: 'var(--accent-emerald)', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
+                Col {tokenSearchResult.col}, Row {tokenSearchResult.row}
               </span>
             )}
           </div>
         </div>
       )}
 
-      {/* Mobile Attendee Ingestion (PWA View) */}
+      {/* 2. MOBILE INGESTION VIEW */}
       {activeTab === 'mobile' && (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
-          <div style={{
-            width: '420px',
-            maxWidth: '100%',
-            background: 'var(--bg-secondary)',
-            border: '1px solid var(--border-subtle)',
-            borderRadius: '16px',
-            padding: '2rem',
-            textAlign: 'center',
-            boxShadow: 'var(--shadow-card)'
-          }}>
-            <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>📷</div>
-            <h3 style={{ fontSize: '1.35rem', fontWeight: 800, marginBottom: '0.35rem' }}>Join the Live Mural</h3>
-            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
-              Snap a photo or selfie. Your image will be normalized, EXIF-stripped, and placed directly onto the big stage screen.
+          <div className="mobile-attendee-card">
+            <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: 'rgba(56, 189, 248, 0.1)', border: '1px solid rgba(56, 189, 248, 0.25)', color: 'var(--accent-cyan)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.25rem' }}>
+              <IconCamera size={22} />
+            </div>
+
+            <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.35rem', fontWeight: 700, color: '#fff', marginBottom: '0.35rem' }}>
+              Contribute to the Live Mural
+            </h3>
+            <p style={{ fontSize: '0.86rem', color: 'var(--text-secondary)', marginBottom: '1.5rem', lineHeight: 1.55 }}>
+              Capture a selfie or conference moment. Photos are automatically normalized, stripped of EXIF telemetry, and rendered into the main stage wall.
             </p>
+
+            {mobilePreview && (
+              <div style={{ marginBottom: '1.25rem' }}>
+                <img
+                  src={mobilePreview}
+                  alt="Preview"
+                  style={{ width: '110px', height: '110px', borderRadius: '10px', objectFit: 'cover', border: '2px solid var(--accent-cyan)', margin: '0 auto', display: 'block' }}
+                />
+              </div>
+            )}
 
             <label style={{
               display: 'block',
-              background: 'var(--gradient-cyber)',
-              color: '#06080e',
-              fontWeight: 800,
+              background: '#f8fafc',
+              color: '#090b10',
+              fontFamily: 'var(--font-display)',
+              fontSize: '0.92rem',
+              fontWeight: 700,
               padding: '0.85rem',
               borderRadius: '10px',
               cursor: 'pointer',
-              marginBottom: '1rem'
+              transition: 'all 0.15s ease',
             }}>
-              {mobileUploading ? 'Uploading & Stripping EXIF...' : 'Take / Upload Photo'}
+              {mobileUploading ? 'Normalizing & Uploading...' : 'Take or Select Photo'}
               <input type="file" accept="image/*" capture="user" onChange={handleMobileUpload} style={{ display: 'none' }} />
             </label>
 
             {myToken && (
-              <div style={{
-                background: 'rgba(0, 240, 255, 0.08)',
-                border: '1px solid var(--accent-cyan)',
-                borderRadius: '10px',
-                padding: '1rem',
-                marginTop: '1.25rem'
-              }}>
-                <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--accent-cyan)', fontWeight: 700 }}>
-                  Your Contributor Token
+              <div className="contributor-pass-ticket">
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', fontWeight: 600, textTransform: 'uppercase', color: 'var(--accent-cyan)', letterSpacing: '0.08em' }}>
+                  Verified Contributor Token
                 </div>
-                <div style={{ fontSize: '1.6rem', fontWeight: 900, color: 'var(--accent-pink)', fontFamily: 'var(--font-mono)' }}>
-                  {myToken}
-                </div>
-                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
-                  Your photo is now on the stage screen! Use this token in "Find My Photo" to locate it.
+                <div className="contributor-pass-token">{myToken}</div>
+                <p style={{ fontSize: '0.76rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
+                  Your tile is live on the big screen. Use this token in "Find My Photo" to highlight your location.
                 </p>
+                <button
+                  onClick={() => setActiveTab('display')}
+                  className="hud-btn"
+                  style={{ width: '100%', justifyContent: 'center', marginTop: '0.85rem', borderColor: 'var(--border-cyan)', color: 'var(--accent-cyan)' }}
+                >
+                  <span>View on Main Display</span>
+                  <IconArrowRight size={14} />
+                </button>
               </div>
             )}
           </div>
         </div>
       )}
 
-      {/* Organizer Setup Tab */}
+      {/* 3. SETTINGS & EVENT QR CODE */}
       {activeTab === 'organizer' && (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
-          <div style={{
-            width: '520px',
-            maxWidth: '100%',
-            background: 'var(--bg-secondary)',
-            border: '1px solid var(--border-subtle)',
-            borderRadius: '16px',
-            padding: '2rem'
-          }}>
-            <h3 style={{ fontSize: '1.35rem', fontWeight: 800, marginBottom: '1.25rem' }}>Organizer Live Event Setup</h3>
-            <div className="form-group">
-              <label className="form-label">Event Title</label>
+          <div className="mobile-attendee-card" style={{ width: '500px', textAlign: 'left' }}>
+            <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.25rem', fontWeight: 700, color: '#fff', marginBottom: '1.25rem' }}>
+              Broadcast Stage Settings
+            </h3>
+
+            <div className="param-row">
+              <div className="param-label-bar"><span>Event Display Title</span></div>
               <input
                 type="text"
-                className="text-input"
                 value={eventTitle}
                 onChange={(e) => setEventTitle(e.target.value)}
+                style={{
+                  width: '100%',
+                  background: 'rgba(255, 255, 255, 0.04)',
+                  border: '1px solid var(--border-subtle)',
+                  color: '#fff',
+                  padding: '0.6rem 0.85rem',
+                  borderRadius: '8px',
+                  fontFamily: 'var(--font-body)',
+                  fontSize: '0.85rem',
+                  outline: 'none',
+                }}
               />
             </div>
 
-            {/* Dynamic Event QR Code */}
-            <div style={{ marginTop: '1.5rem', textAlign: 'center', background: '#fff', borderRadius: '12px', padding: '1.25rem' }}>
-              <svg width="150" height="150" viewBox="0 0 100 100">
-                <rect width="100" height="100" fill="#fff"/>
-                <path d="M10,10 h30 v30 h-30 z M15,15 v20 h20 v-20 z M20,20 h10 v10 h-10 z" fill="#000"/>
-                <path d="M60,10 h30 v30 h-30 z M65,15 v20 h20 v-20 z M70,20 h10 v10 h-10 z" fill="#000"/>
-                <path d="M10,60 h30 v30 h-30 z M15,65 v20 h20 v-20 z M20,70 h10 v10 h-10 z" fill="#000"/>
-                <rect x="50" y="50" width="10" height="10" fill="#000"/>
-                <rect x="70" y="50" width="15" height="10" fill="#000"/>
-                <rect x="50" y="70" width="10" height="20" fill="#000"/>
-                <rect x="70" y="75" width="20" height="15" fill="#000"/>
+            {/* Architectural QR Code Component */}
+            <div style={{ marginTop: '1.5rem', background: '#fff', borderRadius: '12px', padding: '1.5rem', textAlign: 'center' }}>
+              <svg width="140" height="140" viewBox="0 0 100 100" style={{ margin: '0 auto', display: 'block' }}>
+                <rect width="100" height="100" fill="#fff" />
+                <path d="M10,10 h30 v30 h-30 z M15,15 v20 h20 v-20 z M20,20 h10 v10 h-10 z" fill="#000" />
+                <path d="M60,10 h30 v30 h-30 z M65,15 v20 h20 v-20 z M70,20 h10 v10 h-10 z" fill="#000" />
+                <path d="M10,60 h30 v30 h-30 z M15,65 v20 h20 v-20 z M20,70 h10 v10 h-10 z" fill="#000" />
+                <rect x="50" y="50" width="10" height="10" fill="#000" />
+                <rect x="70" y="50" width="15" height="10" fill="#000" />
+                <rect x="50" y="70" width="10" height="20" fill="#000" />
+                <rect x="70" y="75" width="20" height="15" fill="#000" />
               </svg>
-              <div style={{ color: '#111', fontWeight: 700, fontSize: '0.85rem', marginTop: '0.5rem' }}>
-                Scan to Upload to Stage Mural
+              <div style={{ color: '#090b10', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '0.88rem', marginTop: '0.6rem' }}>
+                Audience Mobile Ingestion QR
               </div>
-              <div style={{ color: '#555', fontSize: '0.72rem', fontFamily: 'var(--font-mono)' }}>
-                Direct Bucket PUT via V4 Signed URL
+              <div style={{ color: '#64748b', fontFamily: 'var(--font-mono)', fontSize: '0.72rem', marginTop: '0.15rem' }}>
+                Direct V4 Signed URL &bull; Bucket: bucket-photo-library
               </div>
             </div>
           </div>

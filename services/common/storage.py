@@ -11,10 +11,18 @@ import os
 import io
 import time
 import json
+import uuid
 import logging
+import botocore.exceptions
 from typing import Optional, Union, List, Dict, Any
 
 logger = logging.getLogger("storage")
+
+try:
+    from google.cloud.storage.retry import DEFAULT_RETRY as _DEFAULT_RETRY
+    _GCS_WRITE_RETRY = _DEFAULT_RETRY.with_deadline(30)
+except ImportError:  # MinIO-only images
+    _GCS_WRITE_RETRY = None
 
 # Standard 4-Bucket Architecture
 BUCKET_PHOTO_LIBRARY = os.getenv("BUCKET_PHOTO_LIBRARY", "bucket-photo-library")
@@ -36,29 +44,39 @@ class StorageService:
         
         if self.use_gcp:
             from google.cloud import storage as gcs_storage
+            # On a GCE VM the client authenticates as the VM's service account via the metadata
+            # server; GCP_PROJECT_ID is optional there. STORAGE_EMULATOR_HOST (if set) targets a
+            # local GCS emulator for testing the production code path.
             logger.info("Initializing StorageService in GCP Production Mode (google-cloud-storage)")
-            self.gcs_client = gcs_storage.Client()
+            project = os.getenv("GCP_PROJECT_ID") or None
+            if os.getenv("STORAGE_EMULATOR_HOST"):
+                from google.auth.credentials import AnonymousCredentials
+                self.gcs_client = gcs_storage.Client(project=project or "local-emulator",
+                                                     credentials=AnonymousCredentials())
+            else:
+                self.gcs_client = gcs_storage.Client(project=project)
+            # The default HTTP pool keeps 10 connections; workers and the assembler fetch tiles
+            # with up to 16-32 threads, which otherwise churns connections ("pool is full").
+            from requests.adapters import HTTPAdapter
+            adapter = HTTPAdapter(pool_connections=64, pool_maxsize=64)
+            self.gcs_client._http.mount("https://", adapter)
+            self.gcs_client._http.mount("http://", adapter)
             self.s3_client = None
         else:
             import boto3
             from botocore.config import Config
-            
-            minio_endpoint = os.getenv("MINIO_ENDPOINT", "http://minio:9000")
-            # Fallback for running outside docker network during tests
-            if "minio" in minio_endpoint and not os.getenv("RUNNING_IN_DOCKER"):
-                # Check if localhost is accessible
-                pass
-            
-            minio_access_key = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
-            minio_secret_key = os.getenv("MINIO_SECRET_KEY", "minioadmin")
-            
+
+            # Every service gets its storage endpoint explicitly: on separate VMs there is no
+            # shared Docker network name to fall back on.
+            minio_endpoint = os.getenv("MINIO_ENDPOINT", "http://localhost:9000")
             logger.info(f"Initializing StorageService in Local Plane (MinIO S3 API at {minio_endpoint})")
             self.s3_client = boto3.client(
                 "s3",
                 endpoint_url=minio_endpoint,
-                aws_access_key_id=minio_access_key,
-                aws_secret_access_key=minio_secret_key,
-                config=Config(signature_version="s3v4"),
+                aws_access_key_id=os.getenv("MINIO_ACCESS_KEY", "minioadmin"),
+                aws_secret_access_key=os.getenv("MINIO_SECRET_KEY", "minioadmin"),
+                config=Config(signature_version="s3v4", max_pool_connections=32,
+                              connect_timeout=10, read_timeout=60, retries={"max_attempts": 4}),
                 region_name="us-east-1"
             )
             self.gcs_client = None
@@ -105,7 +123,9 @@ class StorageService:
             if self.use_gcp:
                 bucket = self.gcs_client.bucket(bucket_name)
                 blob = bucket.blob(object_name)
-                blob.upload_from_string(payload, content_type=content_type)
+                # GCS allows ~1 write/sec to one object and throttles bursts with 429; whole-object
+                # overwrites are safe to repeat, so retry with backoff instead of failing.
+                blob.upload_from_string(payload, content_type=content_type, retry=_GCS_WRITE_RETRY)
             else:
                 extra_args = {}
                 if content_type:
@@ -121,8 +141,9 @@ class StorageService:
             logger.error(f"Failed upload to {bucket_name}/{object_name}: {e}")
             raise
 
-    def download_file(self, bucket_name: str, object_name: str, dest_path: Optional[str] = None) -> bytes:
-        """Downloads object bytes from bucket. Optionally saves to dest_path."""
+    def download_file(self, bucket_name: str, object_name: str, dest_path: Optional[str] = None,
+                      quiet: bool = False) -> bytes:
+        """Downloads object bytes from bucket. Optionally saves to dest_path. quiet=True: expected misses aren't logged."""
         object_name = object_name.lstrip("/")
         try:
             if self.use_gcp:
@@ -140,41 +161,42 @@ class StorageService:
 
             return data
         except Exception as e:
-            logger.error(f"Failed download from {bucket_name}/{object_name}: {e}")
+            if not quiet:
+                logger.error(f"Failed download from {bucket_name}/{object_name}: {e}")
             raise
 
-    def generate_signed_url(
-        self,
-        bucket_name: str,
-        object_name: str,
-        method: str = "PUT",
-        expiration: int = 3600,
-        content_type: Optional[str] = None
-    ) -> str:
-        """Generates cryptographically signed upload/download URL."""
+    def upload_stream(self, bucket_name: str, object_name: str, fileobj, content_type: Optional[str] = None) -> None:
+        """
+        Uploads from a file-like object without loading it into memory (multipart/resumable
+        transfer). Used by the API Gateway to relay browser uploads into the private bucket.
+        """
         object_name = object_name.lstrip("/")
         if self.use_gcp:
-            from datetime import timedelta
-            bucket = self.gcs_client.bucket(bucket_name)
-            blob = bucket.blob(object_name)
-            url = blob.generate_signed_url(
-                version="v4",
-                expiration=timedelta(seconds=expiration),
-                method=method,
-                content_type=content_type
-            )
-            return url
+            blob = self.gcs_client.bucket(bucket_name).blob(object_name)
+            blob.upload_from_file(fileobj, content_type=content_type, rewind=True)
         else:
-            client_method = "put_object" if method.upper() == "PUT" else "get_object"
-            params = {"Bucket": bucket_name, "Key": object_name}
-            if content_type and client_method == "put_object":
-                params["ContentType"] = content_type
-            url = self.s3_client.generate_presigned_url(
-                ClientMethod=client_method,
-                Params=params,
-                ExpiresIn=expiration
-            )
-            return url
+            extra = {"ContentType": content_type} if content_type else None
+            self.s3_client.upload_fileobj(fileobj, bucket_name, object_name, ExtraArgs=extra)
+
+    def create_if_absent(self, bucket_name: str, object_name: str, data: bytes,
+                         content_type: str = "application/json") -> bool:
+        """Atomically creates an object; False if it already exists (first writer wins)."""
+        if self.use_gcp:
+            from google.api_core.exceptions import PreconditionFailed
+            try:
+                self.gcs_client.bucket(bucket_name).blob(object_name).upload_from_string(
+                    data, content_type=content_type, if_generation_match=0)
+                return True
+            except PreconditionFailed:
+                return False
+        try:
+            self.s3_client.put_object(Bucket=bucket_name, Key=object_name, Body=data,
+                                      ContentType=content_type, IfNoneMatch="*")
+            return True
+        except botocore.exceptions.ClientError as ce:
+            if ce.response.get("Error", {}).get("Code") in ("PreconditionFailed", "412"):
+                return False
+            raise
 
     def acquire_lock(
         self,
@@ -186,13 +208,16 @@ class StorageService:
         """
         Atomic Worker Lock Acquisition:
         - GCP: uses `if_generation_match=0` precondition.
-        - MinIO: writes lock file with lease metadata and verifies lease freshness.
+        - MinIO: writes lock file with lease metadata, IfNoneMatch='*' atomic conditional put,
+          and nonce verification to guarantee mutual exclusion under high multi-worker concurrency.
         Enables Spot VM preemption auto-recovery when lease expires.
         """
         lock_path = lock_path.lstrip("/")
         now = time.time()
+        nonce = uuid.uuid4().hex
         lock_payload = json.dumps({
             "worker_id": worker_id,
+            "nonce": nonce,
             "acquired_at": now,
             "expires_at": now + ttl_seconds
         })
@@ -210,8 +235,10 @@ class StorageService:
                         if now > content.get("expires_at", 0):
                             # Stale lock expired, override
                             blob.delete()
+                        else:
+                            return False
                     except Exception:
-                        pass
+                        return False
                 
                 # Atomic creation: fails if generation != 0
                 blob.upload_from_string(
@@ -228,29 +255,64 @@ class StorageService:
         else:
             # S3 / MinIO atomic acquisition
             try:
-                # Check existing lock
+                # 1. Check existing lock and lease freshness
                 try:
                     resp = self.s3_client.get_object(Bucket=bucket_name, Key=lock_path)
                     existing = json.loads(resp["Body"].read().decode("utf-8"))
                     if now < existing.get("expires_at", 0):
-                        # Still active by another worker
+                        # Still actively held by another worker
                         return False
+                    else:
+                        # Stale lock expired (Spot VM preemption auto-recovery): remove stale lock
+                        try:
+                            self.s3_client.delete_object(Bucket=bucket_name, Key=lock_path)
+                        except Exception:
+                            pass
                 except self.s3_client.exceptions.NoSuchKey:
                     pass
-                except Exception:
+                except botocore.exceptions.ClientError as ce:
+                    if ce.response.get("Error", {}).get("Code") not in ("NoSuchKey", "404"):
+                        pass
+
+                # 2. Atomic conditional put (fails with PreconditionFailed if already exists)
+                try:
+                    self.s3_client.put_object(
+                        Bucket=bucket_name,
+                        Key=lock_path,
+                        Body=lock_payload.encode("utf-8"),
+                        ContentType="application/json",
+                        IfNoneMatch="*"
+                    )
+                except botocore.exceptions.ClientError as ce:
+                    code = ce.response.get("Error", {}).get("Code")
+                    if code in ("PreconditionFailed", "412"):
+                        # Another worker won the atomic race
+                        return False
+                    # Fallback for storage backends without IfNoneMatch support
                     pass
 
-                # Claim lock
-                self.s3_client.put_object(
-                    Bucket=bucket_name,
-                    Key=lock_path,
-                    Body=lock_payload.encode("utf-8"),
-                    ContentType="application/json"
-                )
-                return True
+                # 3. Read-after-write verification to guarantee strict mutual exclusion
+                resp = self.s3_client.get_object(Bucket=bucket_name, Key=lock_path)
+                holder = json.loads(resp["Body"].read().decode("utf-8"))
+                if holder.get("worker_id") == worker_id and holder.get("nonce") == nonce:
+                    return True
+                return False
             except Exception as e:
                 logger.warning(f"MinIO acquire_lock failed for {lock_path}: {e}")
                 return False
+
+    def renew_lock(self, bucket_name: str, lock_path: str, worker_id: str, ttl_seconds: int) -> bool:
+        """Extends a lease this worker still holds (long tasks must not expire mid-run)."""
+        lock_path = lock_path.lstrip("/")
+        try:
+            holder = json.loads(self.download_file(bucket_name, lock_path, quiet=True))
+        except Exception:
+            return False
+        if holder.get("worker_id") != worker_id:
+            return False
+        holder["expires_at"] = time.time() + ttl_seconds
+        self.upload_file(bucket_name, lock_path, json.dumps(holder).encode("utf-8"), "application/json")
+        return True
 
     def release_lock(self, bucket_name: str, lock_path: str, worker_id: Optional[str] = None) -> bool:
         """Releases/deletes the lock object."""
@@ -286,6 +348,81 @@ class StorageService:
         except Exception as e:
             logger.error(f"list_objects failed for {bucket_name}/{prefix}: {e}")
             return []
+
+    def copy_object(self, bucket_name: str, source: str, dest: str) -> None:
+        """Server-side copy within one bucket (no download/upload through this VM)."""
+        if self.use_gcp:
+            bucket = self.gcs_client.bucket(bucket_name)
+            bucket.copy_blob(bucket.blob(source), bucket, dest, retry=_GCS_WRITE_RETRY)
+        else:
+            self.s3_client.copy_object(Bucket=bucket_name, Key=dest, CopySource={"Bucket": bucket_name, "Key": source})
+
+    def prefix_usage(self, bucket_name: str, prefix: str) -> int:
+        """Total bytes stored under a prefix (raises on listing errors, unlike list_objects)."""
+        prefix = prefix.lstrip("/")
+        if self.use_gcp:
+            return sum(b.size or 0 for b in self.gcs_client.bucket(bucket_name).list_blobs(prefix=prefix))
+        total = 0
+        for page in self.s3_client.get_paginator("list_objects_v2").paginate(Bucket=bucket_name, Prefix=prefix):
+            total += sum(item.get("Size", 0) for item in page.get("Contents", []))
+        return total
+
+    def delete_object(self, bucket_name: str, object_name: str) -> bool:
+        """Deletes a single object from storage."""
+        object_name = object_name.lstrip("/")
+        try:
+            if self.use_gcp:
+                bucket = self.gcs_client.bucket(bucket_name)
+                blob = bucket.blob(object_name)
+                if blob.exists():
+                    blob.delete()
+            else:
+                self.s3_client.delete_object(Bucket=bucket_name, Key=object_name)
+            return True
+        except Exception as e:
+            logger.error(f"Failed deleting {bucket_name}/{object_name}: {e}")
+            return False
+
+    def object_exists(self, bucket_name: str, object_name: str) -> bool:
+        """Exact-key existence check (list_objects is a prefix match)."""
+        object_name = object_name.lstrip("/")
+        try:
+            if self.use_gcp:
+                return self.gcs_client.bucket(bucket_name).blob(object_name).exists()
+            self.s3_client.head_object(Bucket=bucket_name, Key=object_name)
+            return True
+        except Exception:
+            return False
+
+    def delete_prefix(self, bucket_name: str, prefix: str) -> int:
+        """Deletes all objects matching prefix (batched: 1000 keys per S3 request)."""
+        prefix = prefix.lstrip("/")
+        if not prefix:
+            raise ValueError("delete_prefix refuses an empty prefix")
+        keys = self.list_objects(bucket_name, prefix)
+        if not keys:
+            return 0
+        deleted = 0
+        if self.use_gcp:
+            bucket = self.gcs_client.bucket(bucket_name)
+            for k in keys:
+                try:
+                    bucket.blob(k).delete()
+                    deleted += 1
+                except Exception as e:
+                    logger.error(f"Failed deleting {bucket_name}/{k}: {e}")
+            return deleted
+        for i in range(0, len(keys), 1000):
+            batch = keys[i:i + 1000]
+            resp = self.s3_client.delete_objects(
+                Bucket=bucket_name,
+                Delete={"Objects": [{"Key": k} for k in batch], "Quiet": True},
+            )
+            errors = resp.get("Errors", [])
+            for err in errors:
+                logger.error(f"Failed deleting {bucket_name}/{err.get('Key')}: {err.get('Message')}")
+            deleted += len(batch) - len(errors)
+        return deleted
 
 
 # Global singleton instance helper

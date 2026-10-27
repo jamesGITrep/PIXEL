@@ -17,4 +17,6 @@ COPY services/assembler/ /app/services/assembler/
 ENV PYTHONPATH=/app
 WORKDIR /app/services/assembler
 
+STOPSIGNAL SIGTERM
+EXPOSE 8080
 CMD ["python", "assembler.py"]

@@ -17,4 +17,6 @@ COPY services/worker/ /app/services/worker/
 ENV PYTHONPATH=/app
 WORKDIR /app/services/worker
 
+STOPSIGNAL SIGTERM
+EXPOSE 8080
 CMD ["python", "worker.py"]

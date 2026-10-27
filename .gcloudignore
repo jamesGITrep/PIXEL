@@ -1,0 +1,16 @@
+# Uploaded to Cloud Build: only what the four Dockerfiles need
+.git
+.gitignore
+**/node_modules
+**/dist
+**/__pycache__
+**/*.pyc
+terraform/
+tests/
+scripts/
+/*.md
+# top-level notes only (each service needs its requirements.txt)
+/*.txt
+docker-compose*.yml
+# Project slide deck (not part of any service image)
+presentation/

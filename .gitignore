@@ -18,9 +18,11 @@ build/
 .terraform/
 *.tfstate
 *.tfstate.backup
+terraform.tfvars
 
 # Storage & Output test data
 storage/
 downloads/
 temp/
 *.log
+*.exe

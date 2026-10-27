@@ -1,0 +1,15 @@
+# Copy to terraform.tfvars and fill in. scripts/deploy_gcp.ps1 passes project_id and image_tag
+# for you, so only the optional settings need to live here.
+project_id = "your-gcp-project-id"
+region     = "us-central1"
+zone       = "us-central1-a"
+
+# Optional HTTPS: set a domain you control and point its DNS A record at the `public_ip` output.
+# domain = "mosaic.example.com"
+
+# Sizing (defaults shown)
+# frontend_replicas   = 2
+# gateway_replicas    = 2
+# worker_min_replicas = 2
+# worker_max_replicas = 20
+# worker_machine_type = "e2-highcpu-4"

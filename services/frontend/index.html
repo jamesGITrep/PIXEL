@@ -3,16 +3,67 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="Crowd-Sourced Collaborative Art & High-Compute Raster Platform" />
-  <title>Collaborative Art & Raster Platform</title>
+  <title>PixelMosaic — Photo Mosaic Maker &amp; Live Event Photo Wall</title>
+  <meta name="description" content="Turn thousands of photos into one giant, high-resolution photo mosaic. Build mosaics from your own and community photos, or run a live event photo wall where every guest's picture becomes part of the artwork in real time." />
+  <meta name="robots" content="index, follow" />
+  <meta name="theme-color" content="#090b10" />
+  <!-- __SITE_URL__ is replaced by the frontend server with the public origin (scheme + host).
+       Every app URL declares the landing page as canonical, so search results lead to it. -->
+  <link rel="canonical" href="__SITE_URL__/" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 
-  <!-- Modern Google Fonts -->
+  <!-- Social sharing previews -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="PixelMosaic" />
+  <meta property="og:title" content="PixelMosaic — Photo Mosaic Maker &amp; Live Event Photo Wall" />
+  <meta property="og:description" content="Turn thousands of photos into one giant photo mosaic, or run a live event photo wall where every guest's picture becomes a tile in real time." />
+  <meta property="og:url" content="__SITE_URL__/" />
+  <meta property="og:image" content="__SITE_URL__/og-image.jpg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="PixelMosaic — Photo Mosaic Maker &amp; Live Event Photo Wall" />
+  <meta name="twitter:description" content="Turn thousands of photos into one giant photo mosaic, or run a live event photo wall." />
+  <meta name="twitter:image" content="__SITE_URL__/og-image.jpg" />
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "PixelMosaic",
+    "url": "__SITE_URL__/",
+    "image": "__SITE_URL__/og-image.jpg",
+    "applicationCategory": "DesignApplication",
+    "operatingSystem": "Any (web browser)",
+    "description": "Photo mosaic maker and live event photo wall: turn thousands of crowd-sourced photos into one high-resolution mosaic.",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "featureList": [
+      "Photo Mosaic Studio: build a high-resolution photo mosaic from your own and community photos",
+      "Live Event Arena: a real-time photo mosaic wall fed by guests' phone uploads via QR code"
+    ]
+  }
+  </script>
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
-  <div id="root"></div>
+  <div id="root">
+    <!-- Server-delivered landing content for crawlers and no-JS visitors; replaced when the app starts. -->
+    <main style="max-width:880px;margin:4rem auto;padding:0 1.5rem;font-family:Inter,system-ui,sans-serif;color:#e8ecf4;background:#090b10">
+      <h1>PixelMosaic: Turn Thousands of Photos Into One Giant Photo Mosaic</h1>
+      <p>PixelMosaic builds high-resolution photo mosaics from your own pictures and crowd-sourced photos, and powers live event walls where every guest's photo becomes a tile in a shared artwork, in real time.</p>
+      <section>
+        <h2><a href="/live" style="color:#00e5ff">Live Event Arena</a></h2>
+        <p>A live photo mosaic wall for festivals, weddings, conferences and stages. Guests scan a QR code and upload a photo from their phone; it appears on the big screen as part of the mosaic within seconds, and "Find My Photo" shows each guest where their picture landed.</p>
+      </section>
+      <section>
+        <h2><a href="/studio" style="color:#00e5ff">Photo Mosaic Studio</a></h2>
+        <p>Upload a picture and a folder of photos, and the studio rebuilds it as a mosaic using perceptual colour matching, with no repeated photos side by side. Mix your own photos with the community library, filter by theme, and export a print-ready image up to 12,000 pixels.</p>
+      </section>
+    </main>
+  </div>
   <script type="module" src="/src/main.jsx"></script>
 </body>
 </html>

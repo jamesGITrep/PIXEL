@@ -1,0 +1,166 @@
+PIXELMOSAIC - GOOGLE CLOUD DEMO COMMANDS
+=======================================
+Run these in Google Cloud Shell (https://shell.cloud.google.com) or any terminal with gcloud.
+Project: cloudview-512805     Region: asia-south1 (Mumbai)     Live site: http://8.233.196.233
+Lines starting with # are explanations. Copy only the command lines.
+
+
+0. SETUP (run once per Cloud Shell session)
+-------------------------------------------
+gcloud config set project cloudview-512805
+gcloud config set compute/region asia-south1
+
+
+1. VIRTUAL MACHINES - one microservice per VM
+---------------------------------------------
+# All app VMs: name, zone, machine type, internal IP, no external IP
+gcloud compute instances list --filter="name~^pixel-" --format="table(name,zone.basename(),machineType.basename(),status,networkInterfaces[0].networkIP,networkInterfaces[0].accessConfigs[0].natIP)"
+
+# Which microservice each VM runs (label set by Terraform)
+gcloud compute instances list --filter="name~^pixel-" --format="table(name,labels.service,machineType.basename(),scheduling.provisioningModel)"
+
+# Proof each VM starts exactly ONE container: the image named in its start-up script
+for vm in $(gcloud compute instances list --filter="name~^pixel-" --format="value(name)"); do
+  zone=$(gcloud compute instances list --filter="name=$vm" --format="value(zone.basename())")
+  img=$(gcloud compute instances describe $vm --zone $zone --format=json | grep -o 'pixel-services/[a-z]*:' | sort -u | tr '\n' ' ')
+  echo "$vm -> $img"
+done
+
+# (Optional) log in to a VM through IAP and list its running containers
+VM=$(gcloud compute instances list --filter="name~^pixel-gateway" --format="value(name)" --limit=1)
+ZONE=$(gcloud compute instances list --filter="name=$VM" --format="value(zone.basename())")
+gcloud compute ssh $VM --zone $ZONE --tunnel-through-iap --quiet --command "sudo docker ps --format '{{.Image}}  {{.Status}}'"
+
+
+2. MANAGED INSTANCE GROUPS + AUTOSCALING (1 to 7 VMs per service)
+-----------------------------------------------------------------
+# The four groups: frontend, gateway, worker, assembler
+gcloud compute instance-groups managed list --filter="name~^pixel-"
+
+# Autoscaling policy of each group (min, max, CPU target)
+for g in frontend gateway worker assembler; do
+  echo "== pixel-$g"; gcloud compute instance-groups managed describe pixel-$g --region asia-south1 --format="yaml(autoscaler.autoscalingPolicy.minNumReplicas,autoscaler.autoscalingPolicy.maxNumReplicas,autoscaler.autoscalingPolicy.cpuUtilization.utilizationTarget)"
+done
+
+# VMs inside one group and their health
+gcloud compute instance-groups managed list-instances pixel-worker --region asia-south1
+
+# Auto-healing + rolling-update settings of a group
+gcloud compute instance-groups managed describe pixel-gateway --region asia-south1 --format="yaml(autoHealingPolicies,updatePolicy)"
+
+# Instance templates (one per microservice: machine type, image, identity)
+gcloud compute instance-templates list --filter="name~^pixel-" --format="table(name,properties.machineType,properties.scheduling.provisioningModel)"
+
+# LIVE DEMO - self-healing: delete the worker VM, the group recreates it automatically
+W=$(gcloud compute instance-groups managed list-instances pixel-worker --region asia-south1 --format="value(name.basename())" --limit=1)
+gcloud compute instance-groups managed delete-instances pixel-worker --region asia-south1 --instances=$W
+watch -n 5 gcloud compute instance-groups managed list-instances pixel-worker --region asia-south1
+
+
+3. LOAD BALANCERS + HEALTH CHECKS
+---------------------------------
+# Public entry point (external Application LB) and the internal LB in front of the API Gateway
+gcloud compute forwarding-rules list --filter="name~^pixel-"
+gcloud compute addresses list --filter="name~^pixel-"
+
+# Backend services: who receives the traffic
+gcloud compute backend-services list --filter="name~^pixel-"
+
+# Are the backends healthy right now?
+gcloud compute backend-services get-health pixel-frontend-backend --global
+gcloud compute backend-services get-health pixel-gateway-backend --region asia-south1
+
+# URL map + proxy of the public load balancer
+gcloud compute url-maps list --filter="name~^pixel-"
+gcloud compute target-http-proxies list --filter="name~^pixel-"
+
+# Health checks (load balancer checks + auto-healing checks)
+gcloud compute health-checks list --filter="name~^pixel-"
+
+
+4. NETWORK + SECURITY
+---------------------
+# Private VPC and subnet (no VM has a public IP)
+gcloud compute networks list --filter="name~^pixel-"
+gcloud compute networks subnets list --filter="name~^pixel-"
+
+# Firewall: only the LB reaches the frontend, only the frontend reaches the gateway
+gcloud compute firewall-rules list --filter="name~^pixel-" --format="table(name,direction,sourceRanges.list(),sourceTags.list(),targetTags.list(),allowed[].map().firewall_rule().list())"
+
+# Cloud NAT (outbound internet for private VMs)
+gcloud compute routers list --filter="name~^pixel-"
+gcloud compute routers nats list --router pixel-router --region asia-south1
+
+# Service accounts: one per microservice + one for builds
+gcloud iam service-accounts list --filter="email~^pixel-"
+
+# Who can access a bucket (per-service roles)
+gcloud storage buckets get-iam-policy gs://cloudview-512805-pixel-photo-library
+
+
+5. CLOUD STORAGE - the only data store (no database)
+----------------------------------------------------
+# All buckets
+gcloud storage ls
+
+# Bucket settings: private (public access prevention), lifecycle rules
+gcloud storage buckets describe gs://cloudview-512805-pixel-photo-library --format="yaml(name,location,public_access_prevention,uniform_bucket_level_access,lifecycle_config)"
+
+# Size of each bucket
+gcloud storage du -s gs://cloudview-512805-pixel-photo-library gs://cloudview-512805-pixel-target-posters gs://cloudview-512805-pixel-task-coordination gs://cloudview-512805-pixel-mosaic-outputs
+
+# What is inside
+gcloud storage ls gs://cloudview-512805-pixel-photo-library/          # public/ (community), personal/ (vaults), incoming/
+gcloud storage ls gs://cloudview-512805-pixel-task-coordination/      # jobs/, users/, telemetry/, auth/
+gcloud storage ls gs://cloudview-512805-pixel-mosaic-outputs/jobs/ | tail -5   # finished mosaics
+
+# Number of community photos
+gcloud storage ls gs://cloudview-512805-pixel-photo-library/public/thumbs-50x50/ | wc -l
+
+# One finished job: manifest (task coordination) and output files
+JOB=$(gcloud storage ls gs://cloudview-512805-pixel-mosaic-outputs/jobs/ | tail -1)
+gcloud storage ls $JOB
+gcloud storage cat gs://cloudview-512805-pixel-task-coordination/jobs/$(basename $JOB)/manifest.json | head -c 600; echo
+
+# Live worker heartbeats (how the admin dashboard gets its numbers)
+gcloud storage ls gs://cloudview-512805-pixel-task-coordination/telemetry/workers/
+
+# Registered user accounts (profiles are JSON files, passwords are bcrypt hashes)
+gcloud storage ls gs://cloudview-512805-pixel-task-coordination/users/
+
+
+6. BUILD + DEPLOY
+-----------------
+# Container images in Artifact Registry
+gcloud artifacts repositories list --location asia-south1
+gcloud artifacts docker images list asia-south1-docker.pkg.dev/cloudview-512805/pixel-services --include-tags
+
+# Recent Cloud Build runs (each builds the 4 images)
+gcloud builds list --limit 5
+
+# Google Cloud APIs enabled for the project
+gcloud services list --enabled
+
+
+7. LOGS + MONITORING
+--------------------
+# Last requests through the public load balancer
+gcloud logging read 'resource.type="http_load_balancer"' --freshness=1h --limit=10 --format="table(timestamp,httpRequest.status,httpRequest.requestMethod,httpRequest.requestUrl)"
+
+# Container logs from the VMs (gateway, workers, assembler)
+gcloud logging read 'resource.type="gce_instance"' --freshness=30m --limit=20 --format="value(timestamp,jsonPayload.instance.name,jsonPayload.data,textPayload)"
+
+# CPU quota in the region (how far the groups can scale)
+gcloud compute regions describe asia-south1 --flatten=quotas --format="table(quotas.metric,quotas.usage,quotas.limit)" | grep -E "^(METRIC|CPUS |INSTANCES )"
+
+
+8. THE APPLICATION ITSELF
+-------------------------
+# Public website (only the frontend is reachable from the internet)
+curl -s -o /dev/null -w "%{http_code}\n" http://8.233.196.233/
+
+# API through the single gateway
+curl -s http://8.233.196.233/api/v1/library/community/stats | head -c 300; echo
+curl -s http://8.233.196.233/api/v1/admin/telemetry | head -c 400; echo
+
+# Admin console (unlisted URL): http://8.233.196.233/admin1101

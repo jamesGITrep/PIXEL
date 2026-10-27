@@ -2,6 +2,11 @@
 Mode 2: High-Density Structural ASCII & Glyph Art Engine (Task 3.3)
 Applies 3x3 Sobel edge kernels to determine gradient orientation angles (theta = arctan(Gy / Gx))
 and maps directional character glyphs alongside luminance density ramps.
+
+Luminance is equalised with CLAHE (contrast-limited adaptive histogram equalisation) before glyph
+selection, so midtones such as skin spread across the whole ramp instead of collapsing onto one
+character. Directional glyphs (─ │ ╱ ╲) override the ramp on the strongest contours. Every cell
+also carries the average colour of its patch of the source photo, for true-colour rendering.
 """
 
 import math
@@ -21,25 +26,39 @@ LUMINANCE_RAMP_EXTENDED = " .'`^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZm
 
 
 class AsciiEngine:
-    def __init__(self, char_ramp: str = LUMINANCE_RAMP_EXTENDED, edge_threshold: float = 35.0):
+    def __init__(self, char_ramp: str = LUMINANCE_RAMP_EXTENDED, edge_threshold: float = 35.0,
+                 edge_fraction: float = 0.18, clahe_clip: float = 2.0):
         self.char_ramp = char_ramp
-        self.edge_threshold = edge_threshold
+        self.edge_threshold = edge_threshold  # absolute floor: flat images get no edge glyphs
+        self.edge_fraction = edge_fraction    # at most this share of cells become edge glyphs
+        self.clahe_clip = clahe_clip
 
-    def process_image(self, img_bgr: np.ndarray, cols: int = 100) -> Dict[str, Any]:
+    def process_image(
+        self,
+        img_bgr: np.ndarray,
+        cols: int = 100,
+        char_w: int = 8,
+        char_h: int = 16
+    ) -> Dict[str, Any]:
         """
         Converts input image to ASCII matrix with Sobel directional edge orientation.
-        Returns:
-            - ascii_text: Multi-line plain text string
-            - char_matrix: 2D array of {char, r, g, b, is_edge}
+        Derived strictly from target aspect ratio (W / H) and font glyph bounding box (char_w, char_h):
+        R = round(C * (H / W) * (char_w / char_h))
         """
         h, w = img_bgr.shape[:2]
-        char_aspect = 0.5  # Monospace fonts are roughly 1:2 aspect ratio
-        rows = int(cols * (h / w) * char_aspect)
-        rows = max(10, rows)
+        char_aspect = char_w / float(char_h)
+        rows = max(4, int(round(cols * (h / float(w)) * char_aspect)))
 
-        # Resize image for grid analysis
+        pixel_width = cols * char_w
+        pixel_height = rows * char_h
+
+        # Per-cell average colour of the source (INTER_AREA = exact area mean)
         resized_bgr = cv2.resize(img_bgr, (cols, rows), interpolation=cv2.INTER_AREA)
-        gray = cv2.cvtColor(resized_bgr, cv2.COLOR_BGR2GRAY)
+        # CLAHE on the full-resolution luminance, then averaged down to one value per cell
+        full_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+        tiles = (max(1, min(8, cols // 8)), max(1, min(8, rows // 8)))
+        equalised = cv2.createCLAHE(clipLimit=self.clahe_clip, tileGridSize=tiles).apply(full_gray)
+        gray = cv2.resize(equalised, (cols, rows), interpolation=cv2.INTER_AREA)
 
         # 3x3 Sobel edge gradient computation
         sobel_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
@@ -47,6 +66,8 @@ class AsciiEngine:
 
         magnitude = np.sqrt(sobel_x**2 + sobel_y**2)
         orientation = (np.degrees(np.arctan2(sobel_y, sobel_x)) + 180.0) % 180.0
+        # Only the strongest contours become line glyphs (top edge_fraction of gradients)
+        edge_cut = max(self.edge_threshold, float(np.percentile(magnitude, 100 * (1 - self.edge_fraction))))
 
         char_matrix = []
         ascii_lines = []
@@ -63,7 +84,7 @@ class AsciiEngine:
                 is_edge = False
 
                 # Directional edge detection
-                if mag > self.edge_threshold:
+                if mag > edge_cut:
                     ang = orientation[r, c]
                     is_edge = True
                     if (ang >= 67.5) and (ang < 112.5):
@@ -94,6 +115,10 @@ class AsciiEngine:
         return {
             "columns": cols,
             "rows": rows,
+            "pixel_width": pixel_width,
+            "pixel_height": pixel_height,
+            "char_w": char_w,
+            "char_h": char_h,
             "ascii_text": "\n".join(ascii_lines),
             "matrix": char_matrix
         }
